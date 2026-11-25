@@ -1,0 +1,36 @@
+{
+  "schema": "telcox.pipespec/v0.1",
+  "pipeline": "vlr_nokia_dly_bronze",
+  "domain": "rt",
+  "layer": "bronze",
+  "frequency": "dly",
+  "load_type": "file-based",
+  "source": {"feed": "vlr_nokia", "file_format": "csv", "delimiter": "|", "header_flag": true,
+             "landing_prefix": "s3://<tx-bucket>/vlr_nokia/landing/"},
+  "target": {"table_name": "tx.rt_b.vlr_dly_nokia", "save_mode": "append",
+             "partitions": [{"partition_name": "txn_date", "data_type": "date", "order": 1}]},
+  "columns": [
+    {"name": "txn_date", "type": "DATE"}, {"name": "msisdn", "type": "STRING"},
+    {"name": "imei", "type": "STRING"}, {"name": "imsi", "type": "STRING"},
+    {"name": "vendor", "type": "STRING"}, {"name": "switch_name", "type": "STRING"},
+    {"name": "file_date", "type": "STRING"}, {"name": "file_name", "type": "STRING"},
+    {"name": "dbx_process_dttm", "type": "TIMESTAMP"}, {"name": "file_id", "type": "BIGINT"}
+  ],
+  "dq_rules": [
+    {"rule_name": "compare_file_size_in_bytes", "action": "fail", "execution_stage": "raw"},
+    {"rule_name": "check_schema_consistency", "action": "fail", "execution_stage": "transformed"},
+    {"rule_name": "check_null", "target_column": "msisdn", "action": "log", "execution_stage": "transformed"}
+  ],
+  "standardization": [{"standardize_function": "standardize_msisdn", "source_column_name": "msisdn"}],
+  "job": {"tasks": ["landing_to_in_process_file_movement_task", "vlr_nokia_dly_bronze_task",
+                    "in_process_to_archive_file_movement_task", "trigger_downstream_task"],
+          "tags": {"owner": "Network Data Engineering", "layer": "bronze", "job_type": "daily", "job_category": "NETWORK"}},
+  "ddl": {"release_folder": "p1-deploy-<YYYYMMDD>", "statement": "CREATE TABLE IF NOT EXISTS"},
+  "files": {
+    "config":   "src/py/pipelines/src/telcox/rt/etc/vlr_nokia_dly_bronze_config.json",
+    "sql":      "src/py/pipelines/src/telcox/rt/sql/vlr_nokia_dly_bronze.sql",
+    "notebook": "src/py/pipelines/src/telcox/rt/notebooks/vlr_nokia_dly_bronze.ipynb",
+    "job_yml":  "src/py/pipelines/src/telcox/rt/resources/vlr_nokia_dly_bronze_job.yml",
+    "ddl":      "src/py/onboarding/sql/ddl/p1-deploy-<YYYYMMDD>/vlr_nokia_dly_bronze_ddl.sql"
+  }
+}

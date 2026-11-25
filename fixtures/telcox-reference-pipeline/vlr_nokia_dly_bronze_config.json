@@ -1,0 +1,48 @@
+{
+  "application_name": "vlr_nokia_dly_bronze",
+  "logger_configuration": {"log_level": "DEBUG"},
+  "task_configuration": {
+    "datasource_configuration": {
+      "load_type": "file-based",
+      "s3_data_bucket_key": "tx_bucket_name",
+      "s3_in_process_data_prefix": "vlr_nokia/in_process/",
+      "s3_reprocessing_data_prefix": "vlr_nokia/reprocessing/",
+      "s3_manifest_bucket_key": "tx_monitoring_bucket_name",
+      "s3_in_process_manifest_prefix": "manifests/source_manifest/vlr_nokia/in_process/",
+      "s3_reprocessing_manifest_prefix": "manifests/source_manifest/vlr_nokia/reprocessing/",
+      "sql_file_path": "../sql/vlr_nokia_dly_bronze.sql",
+      "file_format": "csv",
+      "delimiter": "|",
+      "header_flag": true,
+      "read_mode": "FAILFAST",
+      "file_timestamp_partition_flag": false,
+      "source_partition_list": [],
+      "additional_spark_read_options": {}
+    },
+    "endpoint_configuration": {
+      "table_name": "tx.rt_b.vlr_dly_nokia",
+      "save_mode": "append",
+      "partition_overwrite_flag": false,
+      "target_partition_list": [
+        {"partition_name": "txn_date", "data_type": "date", "format": "yyyy-MM-dd",
+         "metadata_table_column_ref": "file_date", "order": 1}
+      ],
+      "data_refresh_column_list": ["txn_date"]
+    },
+    "data_standardization_configuration": [
+      {"standardize_function": "standardize_msisdn", "source_column_name": "msisdn", "additional_parameters": {}}
+    ],
+    "data_quality_configuration": [
+      {"rule_name": "compare_file_size_in_bytes", "parameters": {}, "action": "fail",
+       "execution_stage": "raw", "send_email_notifications": true,
+       "send_teams_notifications": true, "raise_servicenow_tickets": false},
+      {"rule_name": "check_schema_consistency", "parameters": {}, "action": "fail",
+       "execution_stage": "transformed", "send_email_notifications": true,
+       "send_teams_notifications": true, "raise_servicenow_tickets": false},
+      {"rule_name": "check_null", "target_column": "msisdn", "parameters": {}, "action": "log",
+       "execution_stage": "transformed", "send_email_notifications": false,
+       "send_teams_notifications": true, "raise_servicenow_tickets": false}
+    ]
+  },
+  "utility_configuration": {}
+}

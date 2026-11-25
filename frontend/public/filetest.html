@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File upload diagnostic</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 720px; margin: 24px auto; padding: 0 16px; }
+  section { border: 1px solid #ccc; border-radius: 8px; padding: 12px 16px; margin: 12px 0; }
+  .result { font-weight: 600; margin-top: 6px; }
+  .ok { color: #1a7f4b; } .bad { color: #b42318; }
+  .drop { border: 2px dashed #888; padding: 24px; text-align: center; border-radius: 8px; }
+  button, label.btn { font: inherit; padding: 6px 12px; border: 1px solid #888; border-radius: 6px; background: #f4f4f4; cursor: pointer; display: inline-block; }
+</style>
+</head>
+<body>
+<h1>File upload diagnostic</h1>
+<p>Try each test and tell me which ones say <b class="ok">WORKED</b>. Nothing is uploaded anywhere; this page only reports what your browser did.</p>
+<p id="env"></p>
+
+<section>
+  <b>Test 1 — plain file input</b> (the most basic control)<br>
+  <input id="t1" type="file" multiple>
+  <div class="result" id="r1">Not tried yet</div>
+</section>
+
+<section>
+  <b>Test 2 — label wrapping an invisible input</b> (what the app uses now)<br>
+  <label class="btn" style="position:relative">📎 Attach files
+    <input id="t2" type="file" multiple style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;font-size:0">
+  </label>
+  <div class="result" id="r2">Not tried yet</div>
+</section>
+
+<section>
+  <b>Test 3 — button that opens a hidden input with a script</b> (what the app used before)<br>
+  <input id="t3" type="file" multiple hidden>
+  <button id="b3">📎 Attach files</button>
+  <div class="result" id="r3">Not tried yet</div>
+</section>
+
+<section>
+  <b>Test 4 — drag and drop</b><br>
+  <div class="drop" id="t4">Drag a file from Explorer onto this box</div>
+  <div class="result" id="r4">Not tried yet</div>
+</section>
+
+<section>
+  <b>Test 5 — paste</b> (copy a file in Explorer, click here, press Ctrl+V)<br>
+  <textarea id="t5" rows="2" style="width:100%" placeholder="Click here, then Ctrl+V"></textarea>
+  <div class="result" id="r5">Not tried yet</div>
+</section>
+
+<script>
+  const show = (id, files) => {
+    const el = document.getElementById(id);
+    const names = Array.from(files).map(f => f.name).join(', ');
+    el.className = 'result ok';
+    el.textContent = files.length ? `WORKED — got: ${names}` : 'Dialog closed with no file';
+  };
+  const automated = navigator.webdriver === true;
+  const brand = (navigator.userAgentData?.brands || []).map(b => b.brand).filter(b => !/Not.?A.?Brand/i.test(b)).join(', ');
+  document.getElementById('env').innerHTML =
+    `<b>Automated (test-controlled) browser:</b> <span class="${automated ? 'bad' : 'ok'}">${automated ? 'YES — file dialogs are captured by the automation tool' : 'no'}</span><br>` +
+    `<b>Browser:</b> ${brand || navigator.userAgent}`;
+  for (const [input, out] of [['t1', 'r1'], ['t2', 'r2'], ['t3', 'r3']]) {
+    document.getElementById(input).addEventListener('change', e => show(out, e.target.files));
+  }
+  document.getElementById('b3').addEventListener('click', () => {
+    const r = document.getElementById('r3');
+    r.className = 'result bad';
+    r.textContent = 'Button clicked, waiting for a dialog… (if nothing opened, this test FAILED)';
+    document.getElementById('t3').click();
+  });
+  const drop = document.getElementById('t4');
+  drop.addEventListener('dragover', e => e.preventDefault());
+  drop.addEventListener('drop', e => { e.preventDefault(); show('r4', e.dataTransfer.files); });
+  document.getElementById('t5').addEventListener('paste', e => {
+    if (e.clipboardData.files.length) { e.preventDefault(); show('r5', e.clipboardData.files); }
+    else { const r = document.getElementById('r5'); r.className = 'result bad'; r.textContent = 'Pasted, but the clipboard had no files'; }
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,19 @@
+# Suggestions only: which standalone skills to offer first in each step. Nothing is required and no skill
+# depends on another. A human picks and runs one skill at a time.
+version: 0.4.0
+suggestions:
+  discover:
+    - {skill: "data-migration:interview", reason: "Turns your documents into a bounded list of gaps and questions"}
+    - {skill: "data-migration:estimate",  reason: "Rough-order-of-magnitude size and duration from what you uploaded"}
+    - {skill: "data-migration:risk",      reason: "Scored risk register from the documents"}
+    - {skill: "data-migration:review",    reason: "Checks a document against its template and quality standards"}
+  plan:
+    - {skill: "data-migration:estimate",  reason: "Effort ranges per disposition class"}
+    - {skill: "data-migration:risk",      reason: "Refresh the risk register with the planning inputs"}
+    - {skill: "data-migration:deps",      reason: "Dependencies and critical path from a job/story list"}
+    - {skill: "data-migration:change",    reason: "Impact of a scope change request"}
+  design:
+    - {skill: "data-migration:translate", reason: "Translate one legacy script or object to the target dialect"}
+    - {skill: "data-migration:review",    reason: "Review a design document or mapping against quality standards"}
+    - {skill: "data-migration:security",  reason: "Assess a security finding or access model"}
+    - {skill: "data-migration:risk",      reason: "Risks introduced by the target design"}

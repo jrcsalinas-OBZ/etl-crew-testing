@@ -1,0 +1,46 @@
+# How the Workbench treats each skill. Names only — no skill content lives in this (committed) file.
+# Skills not listed (e.g. custom or telcox packs) are treated as "standalone".
+version: 0.1.0
+groups:
+  standalone:   # run one at a time on uploaded documents / a pasted description
+    - estimate
+    - risk
+    - review
+    - deps
+    - translate
+    - interview
+    - change
+    - bug
+    - techdebt
+    - security
+    - incident
+    - hotfix
+    - reconcile
+    - quality
+  advanced:     # need records produced by earlier cutover work (upload them as documents)
+    - promote
+    - rollback
+    - dr
+    - wave
+    - project
+    - team
+  phase:        # the numbered chain: each requires the previous phase's approved artifact. Hidden by default.
+    - intent
+    - discover
+    - assess
+    - design
+    - waves
+    - convert
+    - provision
+    - migrate-data
+    - migrate-workload
+    - cutover
+  platform:     # internal rules referenced by other skills; not runnable on their own
+    - state-tracking
+    - state-audit
+    - quality-enforcement
+    - phase-gate
+    - guardian-gap
+    - guardian-ia
+    - guardian-registry
+    - guardian-watch

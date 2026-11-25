@@ -1,0 +1,99 @@
+resources:
+  jobs:
+    tx_vlr_nokia_dly_bronze_job:
+      name: tx_vlr_nokia_dly_bronze_job
+      tags:
+        owner: Network Data Engineering
+        layer: bronze
+        job_type: daily
+        job_category: NETWORK
+      permissions: ${var.default_resource_permissions}
+      timeout_seconds: 7200
+      health:
+        rules:
+          - metric: RUN_DURATION_SECONDS
+            op: GREATER_THAN
+            value: 3600
+      max_concurrent_runs: 5
+      tasks:
+        - task_key: landing_to_in_process_file_movement_task
+          job_cluster_key: cluster
+          notebook_task:
+            notebook_path: ../../common_file_movement.ipynb
+            base_parameters:
+              data_source_base_path: s3://${var.tx_bucket_name}/vlr_nokia/landing/
+              data_destination_base_path: s3://${var.tx_bucket_name}/vlr_nokia/in_process/
+              workspace_id: ${var.job_reference.workspace_id}
+              workspace_url: ${var.job_reference.workspace_url}
+              job_id: ${var.job_reference.job_id}
+              job_name: ${var.job_reference.job_name}
+              job_trigger_type: ${var.job_reference.job_trigger_type}
+              job_run_id: ${var.job_reference.job_run_id}
+              job_start_time: ${var.job_reference.job_start_time}
+              task_run_id: ${var.job_reference.task_run_id}
+              task_name: ${var.job_reference.task_name}
+              task_notebook_path: ${var.job_reference.task_notebook_path}
+              execution_env: ${var.job_reference.execution_env}
+          libraries:
+            - whl: ${var.common_package_wheel_path}
+        - task_key: vlr_nokia_dly_bronze_task
+          depends_on:
+            - task_key: landing_to_in_process_file_movement_task
+          job_cluster_key: cluster
+          max_retries: 1
+          notebook_task:
+            notebook_path: ../notebooks/vlr_nokia_dly_bronze.ipynb
+            base_parameters:
+              config_file_path: ../etc/vlr_nokia_dly_bronze_config.json
+              task_type: bronze
+              upstream_task_name: landing_to_in_process_file_movement_task
+              execution_type: bau
+              workspace_name: ${var.workspace_name}
+              workspace_id: ${var.job_reference.workspace_id}
+              job_id: ${var.job_reference.job_id}
+              job_name: ${var.job_reference.job_name}
+              job_run_id: ${var.job_reference.job_run_id}
+              job_start_time: ${var.job_reference.job_start_time}
+              task_run_id: ${var.job_reference.task_run_id}
+              task_name: ${var.job_reference.task_name}
+              execution_env: ${var.job_reference.execution_env}
+          libraries:
+            - whl: ${var.common_package_wheel_path}
+        - task_key: in_process_to_archive_file_movement_task
+          depends_on:
+            - task_key: vlr_nokia_dly_bronze_task
+          job_cluster_key: cluster
+          notebook_task:
+            notebook_path: ../../common_file_movement.ipynb
+            base_parameters:
+              data_source_base_path: s3://${var.tx_bucket_name}/vlr_nokia/in_process/
+              data_destination_base_path: s3://${var.tx_bucket_name}/vlr_nokia/archive/
+              upstream_task_name: vlr_nokia_dly_bronze_task
+              execution_env: ${var.job_reference.execution_env}
+          libraries:
+            - whl: ${var.common_package_wheel_path}
+        - task_key: trigger_downstream_task
+          depends_on:
+            - task_key: vlr_nokia_dly_bronze_task
+          job_cluster_key: cluster
+          notebook_task:
+            notebook_path: ../../common_pipeline_trigger.ipynb
+            base_parameters:
+              config_file_path: ./rt/etc/vlr_nokia_dly_bronze_config.json
+              check_upstream_flag: "true"
+              is_active: "true"
+              task_type: trigger_downstream
+              execution_env: ${var.job_reference.execution_env}
+          libraries:
+            - whl: ${var.common_package_wheel_path}
+      job_clusters:
+        - job_cluster_key: cluster
+          new_cluster:
+            spark_version: ${var.spark_version}
+            node_type_id: r5d.2xlarge
+            driver_node_type_id: r5d.2xlarge
+            aws_attributes: {first_on_demand: 7, zone_id: auto}
+            spark_conf: ${var.default_spark_conf}
+            spark_env_vars: ${var.default_spark_env_vars}
+            autoscale: {min_workers: 3, max_workers: 6}
+            custom_tags: {"Environment": "${bundle.target}"}

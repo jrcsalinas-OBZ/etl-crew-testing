@@ -1,0 +1,12 @@
+# Skills offered for a discovery run (from Trinity's Discover step: phases 0-1, gates QG0/QG1).
+# `default` runs in this order unless the project changes it. Uploaded custom skills are offered too.
+# `produces` = the Trinity artifact types the skill writes; each becomes its own versioned .md file.
+version: 0.1.0
+default: [data-migration:intent, data-migration:discover]
+skills:
+  - {skill: data-migration:intent,    produces: [INTENT],     note: "Business intent, exit criteria and scope boundary (Phase 0)"}
+  - {skill: data-migration:discover,  produces: [DISC, INV],  note: "Inventory of objects, workloads and consumers with evidence (Phase 1)"}
+  - {skill: data-migration:interview, produces: [INTERVIEW],  note: "Bounded list of gaps and questions for the client"}
+  - {skill: data-migration:estimate,  produces: [ESTIMATE],   note: "L0 rough-order-of-magnitude size (QG0)"}
+  - {skill: data-migration:risk,      produces: [RISK],       note: "Risk register v0 (QG0)"}
+  - {skill: data-migration:review,    produces: [REVIEW],     note: "Checks the generated documents against Trinity templates"}

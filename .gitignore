@@ -1,0 +1,18 @@
+# Hard rule 7: public repo — skill content, data, secrets and client tokens stay on local disk
+skills/data-migration/
+skills/telcox/
+skills/custom/
+data/
+.env
+config/forbidden_tokens.txt
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Node
+node_modules/
+frontend/dist/
