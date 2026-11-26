@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 
 from app.config import Settings
 from app.models import Artifact, ChatSession, DiscoveryRun, Project, Role, User
-from app.services import chat, evidence, handoff, skills
+from app.services import chat, crew_ticket, evidence, handoff, skills
 from app.services.prompts import discovery_system_prompt
 from app.services.runner import RunInput, RunnerError, StepRunner
 
@@ -59,8 +59,9 @@ def catalogue(settings: Settings) -> list[DiscoverySkill]:
             description=s.description if s else "", note=item.get("note", ""), produces=list(item["produces"]),
             source="core" if item["skill"] in defaults else "optional", available=bool(s and s.runnable),
             needs=s.needs if s else ""))
+    listed = {item["skill"] for item in config.get("skills") or []}
     for s in indexed.values():
-        if s.pack == "custom" and s.runnable:
+        if s.pack == "custom" and s.runnable and s.key not in listed:
             out.append(DiscoverySkill(key=s.key, name=s.name, description=s.description, note="Uploaded skill",
                                       produces=[artifact_prefix(s.name)], source="custom", available=True, needs=s.needs))
     return out
@@ -403,7 +404,7 @@ def run_summary(db: Session, run: DiscoveryRun, live: Optional[LiveRuns] = None)
         artifacts=[{"id": a.id, "artifact_id": a.artifact_id, "version": a.version, "doc_type": a.doc_type,
                     "status": a.status} for a in artifacts],
         live=live.get(run.id) if live and run.status == "running" else None,
-        handoff=handoff.view(db, run))
+        handoff=handoff.view(db, run), crew=crew_ticket.view(db, run))
     data.pop("skills_json", None)
     return data
 

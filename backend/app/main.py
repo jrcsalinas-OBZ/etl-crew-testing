@@ -4,7 +4,7 @@ from typing import Callable, Optional
 
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -12,8 +12,8 @@ from app.config import Settings
 from app.db import init_db, make_engine
 from app.models import (Artifact, ChatMessage, ChatSession, DiscoveryRun, KnowledgeFile, Project, StepKey, StepSpace,
                         User)
-from app.services import (chat, discovery, evidence, gates, handoff, knowledge, local_files, projects, skill_upload,
-                          skills)
+from app.services import (chat, crew_ticket, discovery, evidence, gates, handoff, knowledge, local_files, projects,
+                          skill_upload, skills)
 from app.services.jira import JiraConfig
 from app.services.runner import StepRunner, get_runner
 
@@ -59,7 +59,9 @@ class ProjectDetail(BaseModel):
 
 def create_app(settings: Optional[Settings] = None, runner: Optional[StepRunner] = None,
                inline_runs: bool = False, jira_factory: Optional[handoff.JiraFactory] = None,
-               jira_config: Callable[[], JiraConfig] = JiraConfig.from_env) -> FastAPI:
+               jira_config: Callable[[], JiraConfig] = JiraConfig.from_env,
+               opencode_factory: Optional[crew_ticket.OpencodeFactory] = None,
+               crew_config: Callable[[], crew_ticket.CrewConfig] = crew_ticket.CrewConfig.from_env) -> FastAPI:
     settings = settings or Settings.from_env()
     engine = make_engine(settings.database_url)
     init_db(engine)
@@ -328,6 +330,33 @@ def create_app(settings: Optional[Settings] = None, runner: Optional[StepRunner]
         executor.submit(lambda: handoff.send(engine, settings, run_id, jira_factory, jira_config))
         session.expire_all()
         return discovery.run_summary(session, session.get(DiscoveryRun, run_id))
+
+    # ---- ETL Crew ticket straight to the crew's opencode server ---------------------------------
+    def crew_prepared(run_id: int, session: Session) -> tuple[DiscoveryRun, crew_ticket.CrewConfig, crew_ticket.Prepared]:
+        run = require_run(run_id, session)
+        config = crew_config()
+        return run, config, crew_ticket.prepare(session, settings, run, config)
+
+    @app.get("/api/runs/{run_id}/crew-ticket")
+    def preview_crew_ticket(run_id: int, session: Session = Depends(get_session)) -> dict:
+        run, config, prepared = crew_prepared(run_id, session)
+        return {"ticket_key": prepared.ticket_key, "dummy": prepared.dummy, "artifact": prepared.artifact,
+                "text": prepared.text, "unresolved": prepared.unresolved, "gaps": prepared.gaps, "ready": prepared.ready,
+                "curl": crew_ticket.curl_script(config, prepared), "payload_filename": crew_ticket.payload_filename(prepared),
+                "opencode_url": config.opencode_url, "opencode_configured": not config.missing(),
+                "dispatch": crew_ticket.view(session, run)}
+
+    @app.get("/api/runs/{run_id}/crew-ticket/payload")
+    def download_crew_payload(run_id: int, session: Session = Depends(get_session)) -> Response:
+        _, config, prepared = crew_prepared(run_id, session)
+        return Response(json.dumps(prepared.payload(config.agent), ensure_ascii=False, indent=1),
+                        media_type="application/json", headers={
+                            "Content-Disposition": f'attachment; filename="{crew_ticket.payload_filename(prepared)}"'})
+
+    @app.post("/api/runs/{run_id}/crew-ticket/send")
+    def send_crew_ticket(run_id: int, session: Session = Depends(get_session), user: User = Depends(acting_user)) -> dict:
+        record = crew_ticket.send(session, settings, require_run(run_id, session), user, crew_config(), opencode_factory)
+        return record.model_dump(mode="json")
 
     @app.post("/api/runs/{run_id}/reject")
     def reject_run(run_id: int, body: RejectIn, session: Session = Depends(get_session),

@@ -5,6 +5,10 @@ skills/custom/
 data/
 .env
 config/forbidden_tokens.txt
+# real ETL Crew ticket samples and the render script (they name client repos and buckets)
+/render_ticket.py
+/*.src.md
+/wi_*.md
 
 # Python
 .venv/

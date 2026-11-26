@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from app.services.crew_ticket import CrewConfig
 from app.services.jira import JiraConfig
 
 
@@ -16,6 +17,11 @@ def NO_JIRA() -> JiraConfig:
     return JiraConfig(base_url="", project_key="", lead_account_id="")
 
 
+def NO_OPENCODE() -> CrewConfig:
+    """Tests never read the developer's real .env opencode settings."""
+    return CrewConfig(opencode_url="")
+
+
 @pytest.fixture
 def settings(tmp_path) -> Settings:
     return Settings(data_dir=tmp_path, database_url=f"sqlite:///{(tmp_path / 'test.db').as_posix()}",
@@ -24,7 +30,7 @@ def settings(tmp_path) -> Settings:
 
 @pytest.fixture
 def client(settings) -> TestClient:
-    with TestClient(create_app(settings, inline_runs=True, jira_config=NO_JIRA)) as c:
+    with TestClient(create_app(settings, inline_runs=True, jira_config=NO_JIRA, crew_config=NO_OPENCODE)) as c:
         yield c
 
 

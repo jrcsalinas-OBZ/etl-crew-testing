@@ -40,9 +40,11 @@ def test_default_chain_is_intent_then_discover_and_only_discovery_skills_are_off
     assert body["selected"] == ["data-migration:intent", "data-migration:discover"]
     offered = {s["key"]: s for s in body["skills"]}
     assert set(offered) == {"data-migration:intent", "data-migration:discover", "data-migration:interview",
-                            "data-migration:estimate", "data-migration:risk", "data-migration:review", "custom:my-skill"}
+                            "data-migration:estimate", "data-migration:risk", "data-migration:review", "custom:my-skill",
+                            "custom:etl-crew-ticket"}
     assert offered["data-migration:discover"]["produces"] == ["DISC", "INV"]
     assert offered["data-migration:interview"]["available"] is False  # not in the test catalogue
+    assert offered["custom:etl-crew-ticket"]["available"] is False  # local-only skill: default falls back to intent → discover
     assert offered["custom:my-skill"]["source"] == "custom" and offered["custom:my-skill"]["produces"] == ["MY_SKILL"]
     assert body["status"] == "not_started"
 

@@ -86,6 +86,23 @@ class Handoff(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class CrewDispatch(SQLModel, table=True):
+    """The run's ETL Crew ticket sent straight to the crew's opencode server (session + prompt to the lead agent)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    run_id: int = Field(foreign_key="discoveryrun.id", unique=True)
+    project_id: int = Field(foreign_key="project.id", index=True)
+    ticket_key: str = ""  # the Jira key, or DUMMY-<run id> when no Jira issue exists
+    artifact: str = ""  # CREW_TICKET-2026-001@v1
+    status: str = "failed"  # sent | failed
+    session_id: str = ""
+    session_url: str = ""
+    error: str = ""
+    attempts: int = 0
+    sent_by: Optional[int] = Field(default=None, foreign_key="user.id")
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class StepSpace(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     project_id: int = Field(foreign_key="project.id", index=True)

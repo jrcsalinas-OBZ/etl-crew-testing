@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from './api'
-import type { DiscoveryRun, Handoff, TicketPreview, User } from './api'
+import type { CrewTicket, DiscoveryRun, Handoff, TicketPreview, User } from './api'
 
 function HandoffPanel({ runId, approvedBy, handoff, busy, onRetry }: {
   runId: number; approvedBy: string; handoff: Handoff | null; busy: boolean; onRetry: () => void
@@ -51,6 +51,73 @@ function TicketPreviewBox({ runId }: { runId: number }) {
           <p><b>Labels:</b> {preview.labels.join(', ')}</p>
           <p><b>Attachments:</b> {preview.attachments.join(', ')}</p>
           <pre>{preview.description}</pre>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function CrewPanel({ run, onSent }: { run: DiscoveryRun; onSent: () => void }) {
+  const [ticket, setTicket] = useState<CrewTicket | null>(null)
+  const [show, setShow] = useState<'ticket' | 'curl' | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
+  const dispatch = run.crew ?? ticket?.dispatch ?? null
+
+  useEffect(() => {
+    api.crewTicket(run.id).then(setTicket).catch((e: Error) => setError(e.message))
+  }, [run.id, run.crew?.status])
+
+  const send = async () => {
+    if (!ticket || !window.confirm(`Send ${ticket.ticket_key} to the ETL Crew lead at ${ticket.opencode_url}?\n\n`
+      + 'The crew will start building: it creates a branch and opens a pull request.')) return
+    setBusy(true); setError(null)
+    try { await api.sendCrewTicket(run.id); onSent() }
+    catch (e) { setError((e as Error).message) }
+    finally { setBusy(false) }
+  }
+  const copyCurl = async () => {
+    if (!ticket) return
+    await navigator.clipboard.writeText(ticket.curl)
+    setCopied(true); setTimeout(() => setCopied(false), 1500)
+  }
+
+  const approved = run.approval === 'approved'
+  const problems = ticket ? [...ticket.gaps.map((g) => `Missing: ${g}`), ...ticket.unresolved.map((t) => `No reference value for {{${t}}}`)] : []
+  return (
+    <div className={`handoff crew handoff-${dispatch?.status ?? 'pending'}`}>
+      <p>
+        <b>ETL Crew (opencode):</b>{' '}
+        {dispatch?.status === 'sent'
+          ? <>sent as <strong>{dispatch.ticket_key}</strong> ({dispatch.artifact}) —{' '}
+            {dispatch.session_url ? <a href={dispatch.session_url} target="_blank" rel="noreferrer">open session {dispatch.session_id}</a> : <>session {dispatch.session_id}</>}</>
+          : dispatch?.status === 'failed' ? <>sending <strong>failed</strong>: {dispatch.error}</>
+            : ticket ? <>ticket <strong>{ticket.ticket_key}</strong> from {ticket.artifact}{ticket.dummy && ' (no Jira issue — the crew is told to skip Jira steps)'}</>
+              : 'loading the ticket…'}
+      </p>
+      {problems.length > 0 && <ul className="banner warn">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+      {ticket && !ticket.opencode_configured && <p className="banner warn">Set OPENCODE_URL in .env to send from here.</p>}
+      {error && <p className="banner error" role="alert">{error}</p>}
+      {ticket && (
+        <div className="actions">
+          {dispatch?.status !== 'sent' && (
+            <button className="primary" disabled={busy || !approved || !ticket.ready || !ticket.opencode_configured} onClick={send}
+              title={!approved ? 'Approve the discovery run first' : !ticket.ready ? 'Fix the problems listed above first' : ''}>
+              {dispatch?.status === 'failed' ? 'Retry send' : 'Send to ETL Crew'}
+            </button>
+          )}
+          <button onClick={() => setShow(show === 'ticket' ? null : 'ticket')}>{show === 'ticket' ? 'Hide' : 'Show'} ticket</button>
+          <button onClick={() => setShow(show === 'curl' ? null : 'curl')}>{show === 'curl' ? 'Hide' : 'Show'} curl</button>
+          <a href={api.crewPayloadUrl(run.id)}>Download {ticket.payload_filename}</a>
+          {!approved && <small className="hint">Sending unlocks after approval.</small>}
+        </div>
+      )}
+      {ticket && show === 'ticket' && <pre className="ticket">{ticket.text}</pre>}
+      {ticket && show === 'curl' && (
+        <div className="ticket">
+          <p className="hint">Save the payload next to where you run this, then: <button className="link" onClick={copyCurl}>{copied ? 'copied ✓' : 'copy'}</button></p>
+          <pre>{ticket.curl}</pre>
         </div>
       )}
     </div>
@@ -152,6 +219,9 @@ export function RunReview({ runId, actingUser, onChanged, onOpenSession }: Props
         <HandoffPanel runId={run.id} approvedBy={run.approved_by_name} handoff={run.handoff} busy={busy} onRetry={retry} />
       )}
       {run.status === 'completed' && run.approval === 'pending' && <TicketPreviewBox runId={run.id} />}
+      {run.status === 'completed' && run.artifacts.some((a) => a.doc_type === 'CREW_TICKET') && (
+        <CrewPanel run={run} onSent={() => setPolls((p) => p + 1)} />
+      )}
       {awaiting && (
         <div className="decision">
           <span>Review the files below, then decide.</span>

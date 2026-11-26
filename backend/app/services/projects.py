@@ -5,8 +5,8 @@ from fastapi import HTTPException
 from sqlmodel import Session, delete, select
 
 from app.config import Settings
-from app.models import (STEP_ORDER, Artifact, ChatMessage, ChatSession, DiscoveryRun, Handoff, KnowledgeFile, Project,
-                        Role, SessionFile, StepKey, StepSpace, StepStatus, User)
+from app.models import (STEP_ORDER, Artifact, ChatMessage, ChatSession, CrewDispatch, DiscoveryRun, Handoff,
+                        KnowledgeFile, Project, Role, SessionFile, StepKey, StepSpace, StepStatus, User)
 from app.services import evidence
 
 log = logging.getLogger(__name__)
@@ -54,11 +54,14 @@ def delete_project(session: Session, settings: Settings, project: Project, user:
         "artifacts": len(session.exec(select(Artifact.id).where(Artifact.project_id == pid)).all()),
         "jira_tickets_left_in_jira": [h.jira_key for h in session.exec(select(Handoff).where(Handoff.project_id == pid))
                                       if h.jira_key],
+        "opencode_sessions_left": [c.session_id for c in session.exec(select(CrewDispatch).where(
+            CrewDispatch.project_id == pid)) if c.session_id],
     }
     evidence.record(session, project_id=pid, actor_id=user.id, action="project.delete", target_type="project",
                     target_id=pid, before={"name": project.name, **counts}, after=None)
     # children first, so foreign keys never point at a deleted row
     session.exec(delete(Handoff).where(Handoff.project_id == pid))
+    session.exec(delete(CrewDispatch).where(CrewDispatch.project_id == pid))
     if session_ids:
         session.exec(delete(ChatMessage).where(ChatMessage.session_id.in_(session_ids)))
         session.exec(delete(SessionFile).where(SessionFile.session_id.in_(session_ids)))

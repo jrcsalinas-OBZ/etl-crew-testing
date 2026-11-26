@@ -40,6 +40,15 @@ export interface DiscoveryRun {
   started_by: number; started_by_name: string; approved_by_name: string; started_at: string; ended_at: string | null
   artifacts: RunArtifact[]; live: { skill: string; text: string } | null
   handoff: Handoff | null
+  crew: CrewDispatch | null
+}
+export interface CrewDispatch {
+  status: 'sent' | 'failed'; ticket_key: string; artifact: string; session_id: string; session_url: string
+  error: string; attempts: number; updated_at: string
+}
+export interface CrewTicket {
+  ticket_key: string; dummy: boolean; artifact: string; text: string; unresolved: string[]; gaps: string[]; ready: boolean
+  curl: string; payload_filename: string; opencode_url: string; opencode_configured: boolean; dispatch: CrewDispatch | null
 }
 export interface Handoff {
   status: 'pending' | 'sent' | 'failed' | 'not_configured'; jira_key: string; jira_url: string; error: string; attempts: number
@@ -121,6 +130,9 @@ export const api = {
   rejectRun: (id: number, reason: string) => request<DiscoveryRun>(`/runs/${id}/reject`, json({ reason })),
   ticketPreview: (id: number) => request<TicketPreview>(`/runs/${id}/handoff/preview`),
   retryHandoff: (id: number) => request<DiscoveryRun>(`/runs/${id}/handoff/retry`, { method: 'POST' }),
+  crewTicket: (id: number) => request<CrewTicket>(`/runs/${id}/crew-ticket`),
+  crewPayloadUrl: (id: number) => `/api/runs/${id}/crew-ticket/payload`,
+  sendCrewTicket: (id: number) => request<CrewDispatch>(`/runs/${id}/crew-ticket/send`, { method: 'POST' }),
 }
 
 /** POST /run and read the Server-Sent Events stream. Resolves when the stream ends. */
