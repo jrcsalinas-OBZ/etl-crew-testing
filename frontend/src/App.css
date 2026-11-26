@@ -34,6 +34,12 @@ main { flex: 1; width: 100%; max-width: 1280px; margin: 0 auto; padding: 16px; d
 .cards { list-style: none; padding: 0; display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 .card { width: 100%; text-align: left; display: flex; flex-direction: column; gap: 4px; padding: 14px; border-radius: 8px; }
 .card:hover { border-color: var(--accent); }
+.card-wrap { position: relative; }
+.card-delete { position: absolute; top: 8px; right: 8px; padding: 2px 8px; font-size: .8rem; color: var(--muted);
+  border-color: transparent; background: transparent; }
+.card-delete:hover { color: var(--err); border-color: var(--err); }
+.card-wrap .card { padding-right: 84px; }
+button.link.danger { color: var(--err); margin-top: 6px; }
 .card small { color: var(--muted); }
 .new-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0 20px; }
 .new-project input { flex: 1 1 260px; max-width: 420px; }

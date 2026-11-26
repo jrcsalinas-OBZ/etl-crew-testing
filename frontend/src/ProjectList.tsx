@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { api } from './api'
 import type { Project } from './api'
+import { confirmAndDeleteProject } from './deleteProject'
 
 const created = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
 
@@ -11,6 +12,13 @@ export function ProjectList({ onOpen }: { onOpen: (id: number) => void }) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => { api.projects().then(setProjects).catch((e: Error) => setError(e.message)) }, [])
+
+  const remove = async (project: Project) => {
+    setError(null)
+    try {
+      if (await confirmAndDeleteProject(project)) setProjects((list) => list.filter((p) => p.id !== project.id))
+    } catch (err) { setError((err as Error).message) }
+  }
 
   const create = async (e: FormEvent) => {
     e.preventDefault()
@@ -35,11 +43,13 @@ export function ProjectList({ onOpen }: { onOpen: (id: number) => void }) {
       {projects.length === 0 && <p className="hint">No projects yet. Name one above to get started.</p>}
       <ul className="cards">
         {projects.map((p) => (
-          <li key={p.id}>
+          <li key={p.id} className="card-wrap">
             <button className="card" onClick={() => onOpen(p.id)}>
               <strong>{p.name}</strong>
               <small>Created {created(p.created_at)}</small>
             </button>
+            <button className="card-delete" title={`Delete ${p.name}`} aria-label={`Delete ${p.name}`}
+              onClick={() => remove(p)}>🗑 Delete</button>
           </li>
         ))}
       </ul>

@@ -110,6 +110,10 @@ def create_app(settings: Optional[Settings] = None, runner: Optional[StepRunner]
             raise HTTPException(422, "Project name is required")
         return projects.create_project(session, name=body.name.strip(), user_id=user.id)
 
+    @app.delete("/api/projects/{project_id}", status_code=204)
+    def delete_project(project_id: int, session: Session = Depends(get_session), user: User = Depends(acting_user)) -> None:
+        projects.delete_project(session, settings, require_project(project_id, session), user)
+
     @app.get("/api/projects/{project_id}")
     def get_project(project_id: int, session: Session = Depends(get_session)) -> ProjectDetail:
         project = require_project(project_id, session)

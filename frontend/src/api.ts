@@ -81,6 +81,10 @@ export const api = {
   skills: () => request<SkillCatalogue>('/skills'),
   projects: () => request<Project[]>('/projects'),
   createProject: (name: string) => request<Project>('/projects', json({ name })),
+  deleteProject: async (id: number) => {
+    const res = await fetch(`/api/projects/${id}`, { method: 'DELETE', headers: headers() })
+    if (!res.ok) throw await failure(res)  // 204 has no body, so this skips request()'s JSON parsing
+  },
   project: (id: number) => request<{ project: Project; steps: StepSpace[] }>(`/projects/${id}`),
   sessions: (projectId: number) => request<ChatSession[]>(`/projects/${projectId}/sessions`),
   createSession: (projectId: number, step: StepKey, title: string) =>

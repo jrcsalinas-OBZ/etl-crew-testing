@@ -4,6 +4,7 @@ import type { ChatSession, DiscoveryState, DiscoveryStatus, Project, User } from
 import { ChatPane } from './ChatPane'
 import { DiscoverySkills } from './DiscoverySkills'
 import { RunReview } from './RunReview'
+import { confirmAndDeleteProject } from './deleteProject'
 
 export const STATUS_LABEL: Record<DiscoveryStatus, string> = {
   not_started: 'Not started', running: 'Running', failed: 'Last run failed', awaiting_approval: 'Awaiting approval',
@@ -15,7 +16,9 @@ const RUN_LABEL: Record<string, string> = {
 
 type View = { kind: 'session'; id: number } | { kind: 'run'; id: number } | null
 
-export function ProjectView({ projectId, actingUser }: { projectId: number; actingUser: User | undefined }) {
+export function ProjectView({ projectId, actingUser, onDeleted }: {
+  projectId: number; actingUser: User | undefined; onDeleted: () => void
+}) {
   const [project, setProject] = useState<Project | null>(null)
   const [sessions, setSessions] = useState<ChatSession[]>([])
   const [state, setState] = useState<DiscoveryState | null>(null)
@@ -48,6 +51,12 @@ export function ProjectView({ projectId, actingUser }: { projectId: number; acti
       setView({ kind: 'session', id: created.session.id })
       await load()
     } catch (e) { setError((e as Error).message) }
+  }
+
+  const remove = async () => {
+    if (!project) return
+    setError(null)
+    try { if (await confirmAndDeleteProject(project)) onDeleted() } catch (e) { setError((e as Error).message) }
   }
 
   if (!project || !state) return <p className="hint">{error ?? 'Loading…'}</p>
@@ -90,6 +99,10 @@ export function ProjectView({ projectId, actingUser }: { projectId: number; acti
             ))}
           </ul>
         </div>
+        <button className="link danger" onClick={remove}
+          disabled={state.status === 'running'} title={state.status === 'running' ? 'Wait for the discovery run to finish' : ''}>
+          🗑 Delete project
+        </button>
       </nav>
 
       <section className="content">

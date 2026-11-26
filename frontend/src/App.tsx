@@ -48,7 +48,8 @@ export default function App() {
       <main>
         {projectId === null
           ? <ProjectList onOpen={setProjectId} />
-          : <ProjectView key={projectId} projectId={projectId} actingUser={users.find((u) => u.id === actingId)} />}
+          : <ProjectView key={projectId} projectId={projectId} actingUser={users.find((u) => u.id === actingId)}
+              onDeleted={() => setProjectId(null)} />}
       </main>
     </div>
   )
