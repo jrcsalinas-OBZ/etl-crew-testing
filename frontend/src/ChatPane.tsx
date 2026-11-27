@@ -138,8 +138,10 @@ export function ChatPane({ sessionId, discovery, onChanged, onOpenSkills, onOpen
       onDragOver={(e) => { e.preventDefault(); if (!readOnly) setDragging(true) }}
       onDragLeave={() => setDragging(false)} onDrop={readOnly ? undefined : onDrop}>
       <div className="chat-head">
-        <strong>{detail.session.title}</strong>
-        <span className="hint">{detail.files.length} file{detail.files.length === 1 ? '' : 's'} in this session’s context</span>
+        <div className="chat-title">
+          <strong>{detail.session.title}</strong>
+          <span className="hint">{detail.files.length} file{detail.files.length === 1 ? '' : 's'} in context</span>
+        </div>
         <button disabled={readOnly || working || !catalogue} onClick={() => setPicker(true)}
           title="Run a single skill on its own, outside discovery">Run one skill…</button>
         <button className="primary" disabled={!canRun} onClick={runDiscovery}
@@ -149,8 +151,8 @@ export function ChatPane({ sessionId, discovery, onChanged, onOpenSkills, onOpen
       {detail.files.length > 0 && (
         <ul className="filechips" aria-label="Files in this session">
           {detail.files.map((f) => (
-            <li key={f.id} className={f.readable ? '' : 'bad'} title={f.note}>
-              {f.readable ? '📄' : '❌'} {f.filename}{f.flagged_injection ? ' ⚠️' : ''}
+            <li key={f.id} className={f.readable ? '' : 'bad'} title={f.note || f.filename}>
+              {f.readable ? '' : '✕ '}{f.filename}{f.flagged_injection ? ' ⚠️' : ''}
             </li>
           ))}
         </ul>
@@ -191,29 +193,29 @@ export function ChatPane({ sessionId, discovery, onChanged, onOpenSkills, onOpen
         <p className="banner warn">This session is read-only.</p>
       ) : (
         <div className="composer">
-          {/* A native <label> opens the file dialog without any script-triggered click, which some browsers block */}
-          <label className={`attach ${working ? 'disabled' : ''}`} title="Attach files (or drop them anywhere in the chat)">
-            <input type="file" multiple accept={ACCEPT} disabled={working} aria-label="Attach files"
-              onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; upload(files) }} />
-            📎 Attach files
-          </label>
           <textarea rows={2} placeholder="Message, or drop / paste design documents and job inventory here…" value={text}
-            onChange={(e) => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} disabled={working} />
-          <button className="primary" disabled={!text.trim() || working} onClick={send}>Send</button>
+            aria-label="Message" onChange={(e) => setText(e.target.value)} onKeyDown={onKey} onPaste={onPaste} disabled={working} />
+          <div className="composer-bar">
+            {/* A native <label> opens the file dialog without any script-triggered click, which some browsers block */}
+            <label className={`attach ${working ? 'disabled' : ''}`} title="Attach files (or drop them anywhere in the chat)">
+              <input type="file" multiple accept={ACCEPT} disabled={working} aria-label="Attach files"
+                onChange={(e) => { const files = Array.from(e.target.files ?? []); e.target.value = ''; upload(files) }} />
+              📎 Attach
+            </label>
+            <button className="link" onClick={() => setPathMode((v) => !v)} aria-expanded={pathMode}
+              title="Use this if the Attach button doesn't open a file dialog">
+              {pathMode ? 'Hide paths' : 'Add by path'}
+            </button>
+            <span className="spacer" />
+            <button className="primary" disabled={!text.trim() || working} onClick={send}>Send</button>
+          </div>
         </div>
       )}
-      {!readOnly && (
+      {!readOnly && pathMode && (
         <div className="pathbox">
-          <button className="link" onClick={() => setPathMode((v) => !v)} aria-expanded={pathMode}>
-            {pathMode ? 'Hide' : 'Attach button not working? Add files by path'}
-          </button>
-          {pathMode && (
-            <>
-              <textarea rows={3} value={pathText} onChange={(e) => setPathText(e.target.value)} disabled={working}
-                placeholder={'Paste file or folder paths, one per line.\nIn Explorer: select the files, hold Shift, right-click, choose "Copy as path", then paste here.'} />
-              <button className="primary" disabled={!pathText.trim() || working} onClick={addPaths}>Add files</button>
-            </>
-          )}
+          <textarea rows={3} value={pathText} onChange={(e) => setPathText(e.target.value)} disabled={working} aria-label="File or folder paths"
+            placeholder={'Paste file or folder paths, one per line.\nIn Explorer: select the files, hold Shift, right-click, choose "Copy as path", then paste here.'} />
+          <button className="primary" disabled={!pathText.trim() || working} onClick={addPaths}>Add files</button>
         </div>
       )}
 

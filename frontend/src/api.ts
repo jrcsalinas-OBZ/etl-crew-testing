@@ -132,7 +132,13 @@ export const api = {
   retryHandoff: (id: number) => request<DiscoveryRun>(`/runs/${id}/handoff/retry`, { method: 'POST' }),
   crewTicket: (id: number) => request<CrewTicket>(`/runs/${id}/crew-ticket`),
   crewPayloadUrl: (id: number) => `/api/runs/${id}/crew-ticket/payload`,
-  sendCrewTicket: (id: number) => request<CrewDispatch>(`/runs/${id}/crew-ticket/send`, { method: 'POST' }),
+  sendCrewTicket: (id: number, force = false, again = false) => {
+    const query = new URLSearchParams()
+    if (force) query.set('force', 'true')
+    if (again) query.set('again', 'true')
+    const qs = query.toString()
+    return request<CrewDispatch>(`/runs/${id}/crew-ticket/send${qs ? `?${qs}` : ''}`, { method: 'POST' })
+  },
 }
 
 /** POST /run and read the Server-Sent Events stream. Resolves when the stream ends. */

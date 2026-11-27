@@ -10,7 +10,7 @@ function HandoffPanel({ runId, approvedBy, handoff, busy, onRetry }: {
   const status = handoff?.status ?? 'pending'
   return (
     <div className={`handoff handoff-${status}`}>
-      <p>
+      <p role="status">
         Approved by {approvedBy}.{' '}
         {status === 'sent' && <>Sent to ETL Crew as{' '}
           {handoff?.jira_url ? <a href={handoff.jira_url} target="_blank" rel="noreferrer"><strong>{handoff.jira_key}</strong></a> : <strong>{handoff?.jira_key}</strong>}
@@ -67,13 +67,19 @@ function CrewPanel({ run, onSent }: { run: DiscoveryRun; onSent: () => void }) {
 
   useEffect(() => {
     api.crewTicket(run.id).then(setTicket).catch((e: Error) => setError(e.message))
-  }, [run.id, run.crew?.status])
+  }, [run.id, run.crew?.status, run.crew?.session_id])
 
   const send = async () => {
-    if (!ticket || !window.confirm(`Send ${ticket.ticket_key} to the ETL Crew lead at ${ticket.opencode_url}?\n\n`
-      + 'The crew will start building: it creates a branch and opens a pull request.')) return
+    if (!ticket) return
+    const force = ticket.gaps.length > 0
+    const again = dispatch?.status === 'sent'
+    const gapNote = force ? `\n\nIt still has ${ticket.gaps.length} gap(s), sent as <<MISSING>> markers for the lead to resolve:\n- `
+      + ticket.gaps.slice(0, 15).join('\n- ') + (ticket.gaps.length > 15 ? '\n- …' : '') : ''
+    const againNote = again ? `\n\nThis starts a NEW opencode session; session ${dispatch.session_id} keeps running on its own.` : ''
+    if (!window.confirm(`Send ${ticket.ticket_key} to the ETL Crew lead at ${ticket.opencode_url}?\n\n`
+      + 'The crew will start building: it creates a branch and opens a pull request.' + againNote + gapNote)) return
     setBusy(true); setError(null)
-    try { await api.sendCrewTicket(run.id); onSent() }
+    try { await api.sendCrewTicket(run.id, force, again); onSent() }
     catch (e) { setError((e as Error).message) }
     finally { setBusy(false) }
   }
@@ -84,10 +90,11 @@ function CrewPanel({ run, onSent }: { run: DiscoveryRun; onSent: () => void }) {
   }
 
   const approved = run.approval === 'approved'
-  const problems = ticket ? [...ticket.gaps.map((g) => `Missing: ${g}`), ...ticket.unresolved.map((t) => `No reference value for {{${t}}}`)] : []
+  const blocked = (ticket?.unresolved.length ?? 0) > 0  // gaps can be sent anyway; broken placeholders cannot
+  const [showGaps, setShowGaps] = useState(false)
   return (
     <div className={`handoff crew handoff-${dispatch?.status ?? 'pending'}`}>
-      <p>
+      <p role="status">
         <b>ETL Crew (opencode):</b>{' '}
         {dispatch?.status === 'sent'
           ? <>sent as <strong>{dispatch.ticket_key}</strong> ({dispatch.artifact}) —{' '}
@@ -96,17 +103,25 @@ function CrewPanel({ run, onSent }: { run: DiscoveryRun; onSent: () => void }) {
             : ticket ? <>ticket <strong>{ticket.ticket_key}</strong> from {ticket.artifact}{ticket.dummy && ' (no Jira issue — the crew is told to skip Jira steps)'}</>
               : 'loading the ticket…'}
       </p>
-      {problems.length > 0 && <ul className="banner warn">{problems.map((p) => <li key={p}>{p}</li>)}</ul>}
+      {blocked && <ul className="banner error">{ticket!.unresolved.map((t) => <li key={t}>No reference value for {`{{${t}}}`} — can’t send until this is fixed.</li>)}</ul>}
+      {ticket && ticket.gaps.length > 0 && (
+        <div className="banner warn">
+          {ticket.gaps.length} fact(s) the documents didn’t state are marked {'<<MISSING>>'} in the ticket.{' '}
+          <button className="link" onClick={() => setShowGaps((s) => !s)}>{showGaps ? 'hide' : 'show'}</button>
+          {showGaps && <ul>{ticket.gaps.map((g) => <li key={g}>{g}</li>)}</ul>}
+        </div>
+      )}
       {ticket && !ticket.opencode_configured && <p className="banner warn">Set OPENCODE_URL in .env to send from here.</p>}
       {error && <p className="banner error" role="alert">{error}</p>}
       {ticket && (
         <div className="actions">
-          {dispatch?.status !== 'sent' && (
-            <button className="primary" disabled={busy || !approved || !ticket.ready || !ticket.opencode_configured} onClick={send}
-              title={!approved ? 'Approve the discovery run first' : !ticket.ready ? 'Fix the problems listed above first' : ''}>
-              {dispatch?.status === 'failed' ? 'Retry send' : 'Send to ETL Crew'}
-            </button>
-          )}
+          <button className={dispatch?.status === 'sent' ? '' : 'primary'} onClick={send}
+            disabled={busy || !approved || blocked || !ticket.opencode_configured}
+            title={!approved ? 'Approve the discovery run first' : blocked ? 'Fix the reference placeholders first'
+              : dispatch?.status === 'sent' ? 'Re-send this ticket in a new opencode session' : ''}>
+            {busy ? 'Sending…' : dispatch?.status === 'sent' ? 'Send again'
+              : dispatch?.status === 'failed' ? 'Retry send' : ticket.gaps.length ? 'Send anyway' : 'Send to ETL Crew'}
+          </button>
           <button onClick={() => setShow(show === 'ticket' ? null : 'ticket')}>{show === 'ticket' ? 'Hide' : 'Show'} ticket</button>
           <button onClick={() => setShow(show === 'curl' ? null : 'curl')}>{show === 'curl' ? 'Hide' : 'Show'} curl</button>
           <a href={api.crewPayloadUrl(run.id)}>Download {ticket.payload_filename}</a>
@@ -143,7 +158,7 @@ interface Props { runId: number; actingUser: User | undefined; onChanged: () => 
 export function RunReview({ runId, actingUser, onChanged, onOpenSession }: Props) {
   const [run, setRun] = useState<DiscoveryRun | null>(null)
   const [tab, setTab] = useState<number | null>(null)
-  const [content, setContent] = useState<string>('')
+  const [loaded, setLoaded] = useState<{ id: number; text: string } | null>(null)  // tagged so another tab's file never shows
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -158,7 +173,11 @@ export function RunReview({ runId, actingUser, onChanged, onOpenSession }: Props
         setTab((t) => t ?? r.artifacts[0]?.id ?? null)
         if (r.status === 'running' || r.handoff?.status === 'pending') setTimeout(load, 2000)
         else if (polls > 0) onChanged()
-      } catch (e) { if (!stop) setError((e as Error).message) }
+      } catch (e) {
+        if (stop) return
+        setError((e as Error).message)
+        setTimeout(load, 4000)  // a network blip must not freeze "Creating the Jira ticket…" forever
+      }
     }
     load()
     return () => { stop = true }
@@ -166,7 +185,10 @@ export function RunReview({ runId, actingUser, onChanged, onOpenSession }: Props
 
   useEffect(() => {
     if (tab === null) return
-    api.artifact(tab).then((a) => setContent(a.content)).catch((e: Error) => setError(e.message))
+    let stale = false  // a slow response for an earlier tab must not overwrite the current one
+    api.artifact(tab).then((a) => { if (!stale) setLoaded({ id: tab, text: a.content }) })
+      .catch((e: Error) => { if (!stale) setError(e.message) })
+    return () => { stale = true }
   }, [tab])
 
   const decide = async (action: 'approve' | 'reject') => {
@@ -196,7 +218,7 @@ export function RunReview({ runId, actingUser, onChanged, onOpenSession }: Props
   const isStarter = actingUser?.id === run.started_by
   const canReview = actingUser?.role === 'approver' || actingUser?.role === 'owner'
   const awaiting = run.status === 'completed' && run.approval === 'pending'
-  const { meta, body } = splitFrontmatter(content)
+  const { meta, body } = splitFrontmatter(loaded?.id === tab ? loaded.text : '')
 
   return (
     <div className="review">
@@ -208,7 +230,7 @@ export function RunReview({ runId, actingUser, onChanged, onOpenSession }: Props
             <button className="link" onClick={() => onOpenSession(run.session_id)}>open session</button>
           </p>
         </div>
-        <span className={`chip status-${run.status === 'completed' ? run.approval : run.status}`}>
+        <span className={`chip status-${run.status === 'completed' ? run.approval : run.status}`} role="status">
           {run.status === 'running' ? `Running ${run.current_skill}…` : APPROVAL_LABEL[run.approval]}
         </span>
       </header>
@@ -237,9 +259,9 @@ export function RunReview({ runId, actingUser, onChanged, onOpenSession }: Props
         ? <p className="hint">{run.status === 'running' ? 'Files will appear here as each skill finishes.' : 'No files were produced.'}</p>
         : (
           <>
-            <div className="tabs" role="tablist">
+            <div className="tabs" role="group" aria-label="Run files">
               {run.artifacts.map((a) => (
-                <button key={a.id} role="tab" aria-selected={tab === a.id} className={tab === a.id ? 'tab active' : 'tab'} onClick={() => setTab(a.id)}>
+                <button key={a.id} aria-pressed={tab === a.id} className={tab === a.id ? 'tab active' : 'tab'} onClick={() => setTab(a.id)}>
                   {a.artifact_id} <small>v{a.version}</small>
                 </button>
               ))}

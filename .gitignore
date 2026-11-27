@@ -20,3 +20,6 @@ __pycache__/
 # Node
 node_modules/
 frontend/dist/
+
+# local Claude Code config and skills
+.claude/

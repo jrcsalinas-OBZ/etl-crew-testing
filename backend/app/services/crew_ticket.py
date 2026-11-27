@@ -28,11 +28,15 @@ from app.services import chat, evidence
 from app.services.skills import split_frontmatter
 
 DOC_TYPE = "CREW_TICKET"
-TOKEN = re.compile(r"\{\{(GIT:[^}]+|NB_[A-Z_]+|S3_SQL)\}\}")
+# VAR:name = an engagement value (e.g. a package folder named after the client) the model never sees or writes
+TOKEN = re.compile(r"\{\{(GIT:[^}]+|NB_[A-Z_]+|S3_SQL|VAR:[a-z_]+)\}\}")
 GAP = re.compile(r"<<MISSING:\s*([^>]*)>>")
 NOTES = re.compile(r"^## Trinity notes\b.*", re.MULTILINE | re.DOTALL)  # reviewer-only tail, never sent
+SECTION = re.compile(r"^## (\d+)\.", re.MULTILINE)
 DUMMY_NOTE = "This is a dummy ticket; skip all Jira steps."
 SNAPSHOT = Path("crew-ticket") / "reference.json"
+TEMPLATE = Path("crew-ticket") / "template.src.md"  # the real template; its reference sections are used verbatim
+STUB = "_Inserted by the Workbench when the ticket is sent. Write only this section's heading and this line._"
 
 
 class CrewError(Exception):
@@ -50,6 +54,8 @@ class CrewConfig:
     reference_ref: str = "origin/main"
     reference_notebook: str = ""  # repo path of the reference notebook ({{NB_…}})
     s3_sql_file: str = ""  # local copy of the legacy SQL ({{S3_SQL}})
+    ca_bundle: str = ""  # PEM file to trust for a self-signed opencode certificate; TLS is always verified
+    tls_server_name: str = ""  # name the certificate is issued to, when it isn't the URL's host (e.g. a raw ALB name)
 
     @classmethod
     def from_env(cls) -> "CrewConfig":
@@ -59,7 +65,8 @@ class CrewConfig:
                    username=env("OPENCODE_USERNAME"), password=env("OPENCODE_PASSWORD"),
                    public_url=env("OPENCODE_PUBLIC_URL").rstrip("/"), reference_repo=env("TICKET_REFERENCE_REPO"),
                    reference_ref=env("TICKET_REFERENCE_REF") or "origin/main",
-                   reference_notebook=env("TICKET_REFERENCE_NOTEBOOK"), s3_sql_file=env("TICKET_S3_SQL_FILE"))
+                   reference_notebook=env("TICKET_REFERENCE_NOTEBOOK"), s3_sql_file=env("TICKET_S3_SQL_FILE"),
+                   ca_bundle=env("OPENCODE_CA_BUNDLE"), tls_server_name=env("OPENCODE_TLS_SERVER_NAME"))
 
     def missing(self) -> list[str]:
         return [] if self.opencode_url and not self.opencode_url.startswith("<") else ["OPENCODE_URL"]
@@ -78,14 +85,19 @@ class CrewConfig:
 class OpencodeClient:
     def __init__(self, config: CrewConfig, transport: Optional[httpx.BaseTransport] = None):
         self.config = config
-        self.http = httpx.Client(base_url=config.opencode_url, transport=transport, timeout=30, auth=config.auth)
+        self.http = httpx.Client(base_url=config.opencode_url, transport=transport, timeout=30, auth=config.auth,
+                                 verify=config.ca_bundle or True)
 
     def _call(self, method: str, url: str, action: str, **kwargs) -> httpx.Response:
+        if self.config.tls_server_name:  # verify the certificate against its own name instead of the URL host
+            kwargs["extensions"] = {"sni_hostname": self.config.tls_server_name}
         try:
             response = self.http.request(method, url, **kwargs)
         except httpx.HTTPError as exc:
+            hint = ("check OPENCODE_CA_BUNDLE / OPENCODE_TLS_SERVER_NAME" if "CERTIFICATE" in str(exc)
+                    else "is the server up and is your IP allowed?")
             raise CrewError(f"opencode {action} failed: could not reach {self.config.opencode_url} "
-                            f"({type(exc).__name__}) — is `opencode serve` running?") from exc
+                            f"({type(exc).__name__}: {str(exc)[:160]}) — {hint}") from exc
         if response.status_code >= 400:
             hint = {401: " (check OPENCODE_USERNAME / OPENCODE_PASSWORD)", 404: " (unknown session or wrong OPENCODE_URL)"}
             raise CrewError(f"opencode {action} failed: HTTP {response.status_code}{hint.get(response.status_code, '')}"
@@ -171,6 +183,43 @@ def save_snapshot(settings: Settings, values: dict[str, str]) -> Path:
     return path
 
 
+def split_sections(text: str) -> tuple[str, list[tuple[int, str]]]:
+    """(text before '## 1.', [(number, section text incl. heading)])."""
+    starts = list(SECTION.finditer(text))
+    if not starts:
+        return text, []
+    bounds = [m.start() for m in starts] + [len(text)]
+    return text[:bounds[0]], [(int(m.group(1)), text[bounds[i]:bounds[i + 1]]) for i, m in enumerate(starts)]
+
+
+def restore_reference_sections(source: str, template: str) -> str:
+    """Replace (or add) every numbered section that holds reference placeholders in the template with the
+    template's own text, so the model can never mangle them."""
+    fixed = {n: body for n, body in split_sections(template)[1] if TOKEN.search(body)}
+    if not fixed:
+        return source
+    preamble, sections = split_sections(source)
+    merged = {n: body for n, body in sections}
+    for n, body in fixed.items():
+        merged[n] = body if body.endswith("\n") else body + "\n"
+    return preamble + "".join(merged[n] for n in sorted(merged))
+
+
+def skill_template(template: str, variables: dict[str, str]) -> str:
+    """The template the skill reads: reference sections stubbed out, engagement values replaced by {{VAR:name}}."""
+    preamble, sections = split_sections(template)
+    text = preamble + "".join(
+        f"{body.splitlines()[0]}\n\n{STUB}\n\n---\n\n" if TOKEN.search(body) else body for _, body in sections)
+    for name, value in variables.items():
+        text = text.replace(value, f"{{{{VAR:{name}}}}}")
+    return text
+
+
+def load_template(settings: Settings) -> str:
+    path = settings.data_dir / TEMPLATE
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
 def fill(source: str, values: dict[str, str]) -> tuple[str, list[str]]:
     """(rendered text, placeholders left unresolved)."""
     unresolved = sorted({t for t in TOKEN.findall(source) if t not in values})
@@ -220,12 +269,13 @@ def prepare(db: Session, settings: Settings, run: DiscoveryRun, config: CrewConf
     if art is None:
         raise HTTPException(409, f"Discovery #{run.number} has no {DOC_TYPE} artifact. Add the etl-crew-ticket skill "
                                  "to the discovery chain and run discovery again.")
-    source = ticket_source(Path(art.path))
+    source = restore_reference_sections(ticket_source(Path(art.path)), load_template(settings))
     rendered, unresolved = fill(source, reference_values(settings, config, set(TOKEN.findall(source))))
     key, dummy = ticket_key(db, run)
     text = f"[Jira: {key}]\n\n" + (DUMMY_NOTE + "\n\n" if dummy else "") + rendered
+    gaps = list(dict.fromkeys(g.strip() for g in GAP.findall(source)))  # each distinct gap once
     return Prepared(ticket_key=key, dummy=dummy, artifact=f"{art.artifact_id}@v{art.version}", text=text,
-                    unresolved=unresolved, gaps=[g.strip() for g in GAP.findall(source)])
+                    unresolved=unresolved, gaps=gaps)
 
 
 def payload_filename(prepared: Prepared) -> str:
@@ -234,14 +284,26 @@ def payload_filename(prepared: Prepared) -> str:
 
 def curl_script(config: CrewConfig, prepared: Prepared) -> str:
     """The same two calls as a shell script; the prompt goes in the downloaded payload file."""
-    auth = ' -u "$OPENCODE_USERNAME:$OPENCODE_PASSWORD"' if config.username else ""
     title = shlex.quote(json.dumps({"title": f"Jira: {prepared.ticket_key}"}))
     read_id = "python3 -c 'import json,sys; print(json.load(sys.stdin)[\"id\"])'"
+    url = httpx.URL(config.opencode_url or "http://127.0.0.1:4096")
+    setup, opts = [], ""
+    if config.tls_server_name and url.host != config.tls_server_name:
+        # curl checks the certificate against the URL's host: address the cert's name and connect to the real host
+        port = url.port or 443
+        opts += f" --connect-to {config.tls_server_name}:{port}:{url.host}:{port}"
+        url = url.copy_with(host=config.tls_server_name)
+    if config.ca_bundle:
+        setup.append(f"OPENCODE_CA_BUNDLE={shlex.quote(config.ca_bundle)}")
+        opts += ' --cacert "$OPENCODE_CA_BUNDLE"'
+    if config.username:
+        opts += ' -u "$OPENCODE_USERNAME:$OPENCODE_PASSWORD"'
     return "\n".join([
-        f"OPENCODE_URL={shlex.quote(config.opencode_url or 'http://127.0.0.1:4096')}",
-        f"SESSION_ID=$(curl -sS{auth} -X POST \"$OPENCODE_URL/session\" -H 'Content-Type: application/json' "
+        *setup,
+        f"OPENCODE_URL={shlex.quote(str(url).rstrip('/'))}",
+        f"SESSION_ID=$(curl -sS{opts} -X POST \"$OPENCODE_URL/session\" -H 'Content-Type: application/json' "
         f"-d {title} | {read_id})",
-        f"curl -sS{auth} -X POST \"$OPENCODE_URL/session/$SESSION_ID/prompt_async\" "
+        f"curl -sS{opts} -X POST \"$OPENCODE_URL/session/$SESSION_ID/prompt_async\" "
         f"-H 'Content-Type: application/json' --data-binary @{payload_filename(prepared)}",
         'echo "opencode session: $SESSION_ID"',
     ])
@@ -255,34 +317,42 @@ def view(db: Session, run: DiscoveryRun) -> Optional[dict]:
 
 
 def send(db: Session, settings: Settings, run: DiscoveryRun, user: User, config: CrewConfig,
-         factory: Optional[OpencodeFactory] = None) -> CrewDispatch:
-    """Create the opencode session (once — a retry reuses it) and post the ticket to the lead agent."""
+         factory: Optional[OpencodeFactory] = None, force: bool = False, again: bool = False) -> CrewDispatch:
+    """Create the opencode session (once — a retry reuses it) and post the ticket to the lead agent.
+    force=True sends despite <<MISSING>> gaps (the Lead sees the markers); unresolved placeholders always block.
+    again=True re-sends a sent ticket in a new session (for re-testing); the earlier sessions stay in the evidence."""
     if user.role == Role.viewer:
         raise HTTPException(403, "Viewers cannot send tickets to ETL Crew.")
     if run.approval != "approved":
         raise HTTPException(409, "Only an approved discovery run can be sent to ETL Crew.")
     record = db.exec(select(CrewDispatch).where(CrewDispatch.run_id == run.id)).first()
-    if record and record.status == "sent":
-        raise HTTPException(409, f"Already sent to ETL Crew (opencode session {record.session_id}).")
+    previous = record.session_id if record and record.status == "sent" else ""
+    if previous and not again:
+        raise HTTPException(409, f"Already sent to ETL Crew (opencode session {previous}). Use Send again for a new session.")
     if config.missing():
         raise HTTPException(409, "opencode is not configured. Set in .env: " + ", ".join(config.missing()))
     prepared = prepare(db, settings, run, config)
     if prepared.unresolved:
         raise HTTPException(409, "No value for these reference placeholders: " + ", ".join(prepared.unresolved)
                             + ". Set TICKET_REFERENCE_REPO or learn a reference snapshot.")
-    if prepared.gaps:
-        raise HTTPException(409, "The ticket still has gaps to fill: " + "; ".join(prepared.gaps))
+    if prepared.gaps and not force:
+        raise HTTPException(409, f"The ticket still has {len(prepared.gaps)} gaps to fill: " + "; ".join(prepared.gaps)
+                            + ". Send anyway to let the ETL Crew lead handle them.")
 
     record = record or CrewDispatch(run_id=run.id, project_id=run.project_id)
     record.ticket_key, record.artifact, record.sent_by = prepared.ticket_key, prepared.artifact, user.id
     record.attempts += 1
+    if previous:
+        record.session_id, record.session_url = "", ""
     evidence.record(db, project_id=run.project_id, actor_id=user.id, action="crew.dispatch", target_type="discovery_run",
                     target_id=run.id, after={"ticket_key": prepared.ticket_key, "artifact": prepared.artifact,
-                                             "opencode_url": config.opencode_url, "agent": config.agent})
+                                             "opencode_url": config.opencode_url, "agent": config.agent,
+                                             "sent_with_gaps": prepared.gaps, "replaces_session": previous})
     client = (factory or OpencodeClient)(config)
     try:
         if not record.session_id:
-            session = client.create_session(f"Jira: {prepared.ticket_key}")
+            suffix = f" #{record.attempts}" if record.attempts > 1 else ""  # tell repeat sends apart in opencode's list
+            session = client.create_session(f"Jira: {prepared.ticket_key}{suffix}")
             record.session_id = session["id"]
             record.session_url = config.session_link(session.get("directory", ""), session["id"])
         client.prompt_async(record.session_id, prepared.payload(config.agent))
@@ -303,13 +373,35 @@ def send(db: Session, settings: Settings, run: DiscoveryRun, user: User, config:
 
 
 def _cli(argv: list[str]) -> int:
-    if len(argv) != 3 or argv[0] != "learn":
-        print("usage: python -m app.services.crew_ticket learn <ticket.src.md> <ticket.md>")
+    """learn <ticket.src.md> <ticket.md> [--var name=value ...] [--skill-template PATH]
+
+    Learns the reference values, keeps the real template for verbatim reference sections, and (with
+    --skill-template) writes the copy the skill reads, where each --var value becomes {{VAR:name}}."""
+    if len(argv) < 3 or argv[0] != "learn":
+        print(_cli.__doc__)
         return 2
-    source, rendered = (Path(p).read_text(encoding="utf-8") for p in argv[1:])
-    values = learn(source, rendered)
-    path = save_snapshot(Settings.from_env(), values)
-    print(f"learned {len(values)} reference values -> {path}")
+    source_path, rendered_path, rest = argv[1], argv[2], argv[3:]
+    variables, skill_path = {}, None
+    while rest:
+        flag, value, rest = rest[0], rest[1], rest[2:]
+        if flag == "--var":
+            name, _, val = value.partition("=")
+            if not re.fullmatch(r"[a-z_]+", name) or len(val) < 4:
+                raise SystemExit(f"--var needs name=value with a lower_snake name and a value of 4+ characters: {value}")
+            variables[name] = val
+        elif flag == "--skill-template":
+            skill_path = Path(value)
+        else:
+            raise SystemExit(f"unknown option {flag}")
+    source = Path(source_path).read_text(encoding="utf-8")
+    values = learn(source, Path(rendered_path).read_text(encoding="utf-8"))
+    settings = Settings.from_env()
+    path = save_snapshot(settings, {**values, **{f"VAR:{k}": v for k, v in variables.items()}})
+    (settings.data_dir / TEMPLATE).write_text(source, encoding="utf-8")
+    print(f"learned {len(values)} reference values and {len(variables)} variables -> {path}")
+    if skill_path:
+        skill_path.write_text(skill_template(source, variables), encoding="utf-8")
+        print(f"skill template -> {skill_path}")
     return 0
 
 

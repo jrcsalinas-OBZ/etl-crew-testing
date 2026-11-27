@@ -3,6 +3,8 @@ import { api, setActingUser } from './api'
 import type { User } from './api'
 import { ProjectList } from './ProjectList'
 import { ProjectView } from './ProjectView'
+import { applyTheme, loadTheme } from './theme'
+import type { Theme } from './theme'
 import './App.css'
 
 export default function App() {
@@ -24,12 +26,20 @@ export default function App() {
     return () => window.removeEventListener('focus', refreshConfig)
   }, [])
 
+  const [theme, setTheme] = useState<Theme>(loadTheme)
+  const toggleTheme = () => {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark'
+    applyTheme(next); setTheme(next)
+  }
+
   const switchUser = (id: number) => { setActingUser(id); setActingId(id) }
 
   return (
     <div className="app">
       <header className="topbar">
-        <button className="brand" onClick={() => setProjectId(null)}>Trinity Workbench</button>
+        <button className="brand" onClick={() => setProjectId(null)}>
+          <span className="brand-mark" aria-hidden="true">OBZ</span>Trinity Workbench
+        </button>
         <div className="topright">
           {runner && (runner.runner === 'api'
             ? <span className="chip ok" title="Responses come from the Claude API">Claude API · {runner.model}</span>
@@ -42,6 +52,11 @@ export default function App() {
               {users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
             </select>
           </label>
+          <button className="theme-toggle" onClick={toggleTheme} aria-pressed={theme === 'dark'}
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
+            <span aria-hidden="true">{theme === 'dark' ? '☀' : '☾'}</span>
+            <span className="sr-only">Dark mode</span>
+          </button>
         </div>
       </header>
       {error && <p className="banner error" role="alert">{error}</p>}

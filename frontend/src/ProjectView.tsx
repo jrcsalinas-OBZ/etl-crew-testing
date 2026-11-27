@@ -10,6 +10,10 @@ export const STATUS_LABEL: Record<DiscoveryStatus, string> = {
   not_started: 'Not started', running: 'Running', failed: 'Last run failed', awaiting_approval: 'Awaiting approval',
   approved: 'Approved — Jira ticket pending', rejected: 'Rejected — run again', sent_to_etl_crew: 'Sent to ETL Crew',
 }
+const STATUS_TONE: Record<DiscoveryStatus, string> = {
+  not_started: '', running: '', failed: 'err', awaiting_approval: 'warn',
+  approved: 'ok', rejected: 'warn', sent_to_etl_crew: 'ok',
+}
 const RUN_LABEL: Record<string, string> = {
   pending: 'awaiting approval', approved: 'approved', rejected: 'rejected', superseded: 'superseded', 'n/a': 'failed',
 }
@@ -65,44 +69,51 @@ export function ProjectView({ projectId, actingUser, onDeleted }: {
     <div className="project">
       <nav className="rail" aria-label="Project">
         <h2>{project.name}</h2>
-        <div className="stepbox">
-          <header><span>Discovery</span><small className={`status s-${state.status}`}>{STATUS_LABEL[state.status]}</small></header>
-          <small className="hint">Skills: {state.selected.map((k) => state.skills.find((s) => s.key === k)?.name ?? k).join(' → ')}</small>
-          <button className="link" onClick={() => setSkillsOpen(true)}>Change discovery skills…</button>
-        </div>
+        <section className="rail-group" aria-label="Discovery">
+          <header className="rail-label">Discovery</header>
+          <span className={`chip ${STATUS_TONE[state.status]}`}>{STATUS_LABEL[state.status]}</span>
+          <p className="rail-meta">{state.selected.map((k) => state.skills.find((s) => s.key === k)?.name ?? k).join(' → ')}</p>
+          <button className="link small" onClick={() => setSkillsOpen(true)}>Change skills…</button>
+        </section>
 
-        <div className="stepbox">
-          <header><span>Sessions</span></header>
+        <section className="rail-group" aria-label="Sessions">
+          <header className="rail-label">
+            Sessions
+            <button className="icon-btn" onClick={newSession} title="New session" aria-label="New session">+</button>
+          </header>
           <ul className="sessions">
             {sessions.map((s) => (
               <li key={s.id}>
                 <button className={view?.kind === 'session' && view.id === s.id ? 'session active' : 'session'}
-                  onClick={() => setView({ kind: 'session', id: s.id })}>💬 {s.title}</button>
+                  onClick={() => setView({ kind: 'session', id: s.id })}>{s.title}</button>
               </li>
             ))}
           </ul>
-          <button className="link" onClick={newSession}>+ New session</button>
-        </div>
+        </section>
 
-        <div className="stepbox">
-          <header><span>Runs</span></header>
+        <section className="rail-group" aria-label="Runs">
+          <header className="rail-label">Runs</header>
           {state.runs.length === 0 && <small className="hint">No discovery runs yet.</small>}
           <ul className="sessions">
             {state.runs.map((r) => (
               <li key={r.id}>
                 <button className={view?.kind === 'run' && view.id === r.id ? 'session active' : 'session'}
                   onClick={() => setView({ kind: 'run', id: r.id })}>
-                  🔎 Discovery #{r.number} <small className={`status r-${r.status === 'completed' ? r.approval : r.status}`}>
+                  <span>Discovery #{r.number}</span>
+                  <small className={`status r-${r.status === 'completed' ? r.approval : r.status}`}>
                     {r.status === 'running' ? 'running…' : RUN_LABEL[r.approval]}</small>
                 </button>
               </li>
             ))}
           </ul>
+        </section>
+
+        <div className="rail-footer">
+          <button className="link danger" onClick={remove}
+            disabled={state.status === 'running'} title={state.status === 'running' ? 'Wait for the discovery run to finish' : ''}>
+            Delete project
+          </button>
         </div>
-        <button className="link danger" onClick={remove}
-          disabled={state.status === 'running'} title={state.status === 'running' ? 'Wait for the discovery run to finish' : ''}>
-          🗑 Delete project
-        </button>
       </nav>
 
       <section className="content">

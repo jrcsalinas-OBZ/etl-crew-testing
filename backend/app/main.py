@@ -354,8 +354,10 @@ def create_app(settings: Optional[Settings] = None, runner: Optional[StepRunner]
                             "Content-Disposition": f'attachment; filename="{crew_ticket.payload_filename(prepared)}"'})
 
     @app.post("/api/runs/{run_id}/crew-ticket/send")
-    def send_crew_ticket(run_id: int, session: Session = Depends(get_session), user: User = Depends(acting_user)) -> dict:
-        record = crew_ticket.send(session, settings, require_run(run_id, session), user, crew_config(), opencode_factory)
+    def send_crew_ticket(run_id: int, force: bool = False, again: bool = False, session: Session = Depends(get_session),
+                         user: User = Depends(acting_user)) -> dict:
+        record = crew_ticket.send(session, settings, require_run(run_id, session), user, crew_config(), opencode_factory,
+                                  force=force, again=again)
         return record.model_dump(mode="json")
 
     @app.post("/api/runs/{run_id}/reject")

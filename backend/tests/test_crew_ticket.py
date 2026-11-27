@@ -106,11 +106,61 @@ def test_learn_recovers_each_placeholder_from_a_rendered_example():
         crew_ticket.learn(source, rendered.replace("cells:", "rows:"))
 
 
+def test_a_self_signed_cert_is_verified_against_its_own_name():
+    config = CrewConfig(opencode_url="https://alb.example.com", ca_bundle="cert.pem", tls_server_name="crew.internal")
+    seen = []
+    client = OpencodeClient(config, transport=httpx.MockTransport(
+        lambda r: seen.append(r.extensions.get("sni_hostname")) or httpx.Response(200, json={"id": "s1"})))
+    client.create_session("Jira: X-1")
+    assert seen == ["crew.internal"]
+
+    prepared = crew_ticket.Prepared("X-1", False, "A", "text", [], [])
+    script = crew_ticket.curl_script(config, prepared)
+    assert "OPENCODE_URL=https://crew.internal" in script and "-k" not in script.split()
+    assert '--connect-to crew.internal:443:alb.example.com:443 --cacert "$OPENCODE_CA_BUNDLE"' in script
+
+
 def test_notebook_cells_render_like_render_ticket():
     values = crew_ticket.notebook_values({"metadata": {"k": 1}, "cells": [
         {"cell_type": "markdown", "source": ["# Title"]}, {"cell_type": "code", "source": ["x = '```'\n", "y = 1"]}]})
     assert values["NB_CELL_COUNT"] == "2" and json.loads(values["NB_META"]) == {"k": 1}
     assert values["NB_CELLS"] == "**[0] markdown**\n\n```markdown\n# Title\n```\n\n**[1] code**\n\n````python\nx = '```'\ny = 1\n````"
+
+
+TEMPLATE = """## New Pipeline: Example
+
+## 1. Identity
+
+- Path: src/{{VAR:package_dir}}/example
+
+---
+
+## 6. Reference Files
+
+```yaml
+{{GIT:ref/{{VAR:package_dir}}/job.yml}}
+```
+
+---
+
+## 7. Target Files
+"""
+
+
+def test_reference_sections_come_from_the_template_and_the_skill_never_sees_them():
+    template = TEMPLATE.replace("{{VAR:package_dir}}", "acme")  # the real template names the client
+    skill_copy = crew_ticket.skill_template(template, {"package_dir": "acme"})
+    assert "acme" not in skill_copy and "src/{{VAR:package_dir}}/example" in skill_copy
+    assert "{{GIT" not in skill_copy and crew_ticket.STUB in skill_copy
+    generated = ("## New Pipeline: Sales\n\n## 1. Identity\n\n- Path: src/{{VAR:package_dir}}/sales\n\n---\n\n"
+                 "## 6. Reference Files\n\n{{GIT:ref/<<MISSING: package directory>>/job.yml}}\n\n---\n\n## 7. Target Files\n")
+    restored = crew_ticket.restore_reference_sections(generated, template)
+    assert "{{GIT:ref/acme/job.yml}}" in restored and "<<MISSING" not in restored
+    assert restored.index("## 1.") < restored.index("## 6.") < restored.index("## 7.")
+    text, unresolved = crew_ticket.fill(restored, {"GIT:ref/acme/job.yml": "jobs: {}", "VAR:package_dir": "acme"})
+    assert unresolved == [] and "src/acme/sales" in text and "jobs: {}" in text
+    # a ticket that left the section out gets it inserted in order
+    assert "## 6. Reference Files" in crew_ticket.restore_reference_sections(generated.split("## 6.")[0] + "## 7. T\n", template)
 
 
 def test_the_ticket_skill_is_in_the_default_chain_when_installed(crew_settings):
@@ -165,6 +215,21 @@ def test_approved_ticket_is_sent_to_the_lead_agent_once(crew_settings):
     assert actions[-1] == "crew.dispatch"
 
 
+def test_send_again_starts_a_new_session_and_keeps_the_old_one_in_evidence(crew_settings):
+    fake = FakeOpencode()
+    with make_client(crew_settings, fake) as c:
+        pid, _, run_id = completed_run(c)
+        c.post(f"/api/runs/{run_id}/approve", headers=APPROVER)
+        c.post(f"/api/runs/{run_id}/crew-ticket/send", headers=APPROVER)
+        resent = c.post(f"/api/runs/{run_id}/crew-ticket/send?again=true", headers=APPROVER).json()
+    assert [kind for kind, _ in fake.calls].count("session") == 2
+    assert fake.calls[2][1] == {"title": f"Jira: DUMMY-{run_id} #2"}
+    assert resent["status"] == "sent" and resent["session_id"] == "ses_3" and resent["attempts"] == 2
+    with Session(make_engine(crew_settings.database_url)) as s:
+        dispatches = [e.after_json for e in s.exec(select(Evidence).where(Evidence.action == "crew.dispatch"))]
+    assert '"replaces_session": "ses_1"' in dispatches[-1]
+
+
 def test_failed_prompt_is_recorded_and_the_retry_reuses_the_session(crew_settings):
     fake = FakeOpencode(fail_prompt=1)
     with make_client(crew_settings, fake) as c:
@@ -190,6 +255,21 @@ def test_incomplete_tickets_and_missing_settings_are_never_sent(crew_settings, r
         r = c.post(f"/api/runs/{run_id}/crew-ticket/send", headers=APPROVER)
     assert r.status_code == 409 and expected in r.json()["detail"]
     assert fake.calls == []
+
+
+def test_gaps_are_listed_once_and_can_be_sent_anyway(crew_settings):
+    fake = FakeOpencode()
+    gap = "<<MISSING: target catalog>> and again <<MISSING: target catalog>>\n"
+    with make_client(crew_settings, fake, runner=TicketRunner(gap=gap)) as c:
+        pid, _, run_id = completed_run(c)
+        c.post(f"/api/runs/{run_id}/approve", headers=APPROVER)
+        assert c.get(f"/api/runs/{run_id}/crew-ticket").json()["gaps"] == ["target catalog"]
+        sent = c.post(f"/api/runs/{run_id}/crew-ticket/send?force=true", headers=APPROVER).json()
+    assert sent["status"] == "sent"
+    assert "<<MISSING: target catalog>>" in fake.calls[1][1]["parts"][0]["text"]  # the lead sees the gap
+    with Session(make_engine(crew_settings.database_url)) as s:
+        last = s.exec(select(Evidence).where(Evidence.project_id == pid).order_by(Evidence.id.desc())).first()
+    assert json.loads(last.after_json)["sent_with_gaps"] == ["target catalog"]
 
 
 def test_a_run_without_the_ticket_skill_explains_how_to_get_one(client, project_id):
